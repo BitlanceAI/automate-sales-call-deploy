@@ -1,15 +1,23 @@
 import { makeOutBoundCall } from "@/twilioService";
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://automate-sales-call-frontend-git-main-bitlanceais-projects.vercel.app"
+];
+
 export default async function handler(req, res) {
-  const allowedOrigins = ["http://localhost:3000", "https://automate-sales-call-frontend-git-main-bitlanceais-projects.vercel.app"];
   const origin = req.headers.origin;
+
+  // Always set CORS headers
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*"); // fallback
   }
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Handle preflight
+  // Respond immediately to preflight requests
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
