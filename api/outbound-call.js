@@ -1,0 +1,34 @@
+import { makeOutBoundCall } from "@/twilioService";
+
+export default async function handler(req, res) {
+  const allowedOrigins = ["http://localhost:3000", "https://automate-sales-call-frontend-git-main-bitlanceais-projects.vercel.app"];
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    res.setHeader("Allow", ["POST", "OPTIONS"]);
+    return res.status(405).end(`Method ${req.method} Not Allowed`);
+  }
+
+  try {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, message: "Phone number required" });
+    }
+
+    const callSid = await makeOutBoundCall(phoneNumber);
+    res.status(200).json({ success: true, sid: callSid });
+  } catch (err) {
+    console.error("Twilio call error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
