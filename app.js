@@ -12,12 +12,12 @@ const translate = require('google-translate-api-x');
 console.log('SERVER:', process.env.SERVER);
 
 // Core services
-const { GptService } = require('./services/gpt-service');
-const { StreamService } = require('./services/stream-service');
-const { TranscriptionService } = require('./services/transcription-service');
-const { TextToSpeechService } = require('./services/tts-service');
-const { recordingService } = require('./services/recording-service');
-const { makeOutBoundCall } = require('./scripts/outbound-call'); // ✅ correct import
+const { GptService } = require('./automate-sales-call/pages/services/gpt-service');
+const { StreamService } = require('./automate-sales-call/pages/services/stream-service');
+const { TranscriptionService } = require('./automate-sales-call/pages/services/transcription-service');
+const { TextToSpeechService } = require('./automate-sales-call/pages/services/tts-service');
+const { recordingService } = require('./automate-sales-call/pages/services/recording-service');
+const { makeOutBoundCall } = require('./automate-sales-call/pages/scripts/outbound-call'); // ✅ correct import
 
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
 
