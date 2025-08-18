@@ -8,7 +8,7 @@ const allowedOrigins = [
 export default async function handler(req, res) {
   const origin = req.headers.origin;
 
-  // Always set CORS headers
+  // Set CORS headers
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   } else {
@@ -17,11 +17,12 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Respond immediately to preflight requests
+  // Preflight request
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
+  // Only POST allowed
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST", "OPTIONS"]);
     return res.status(405).end(`Method ${req.method} Not Allowed`);
@@ -34,9 +35,9 @@ export default async function handler(req, res) {
     }
 
     const callSid = await makeOutBoundCall(phoneNumber);
-    res.status(200).json({ success: true, sid: callSid });
+    return res.status(200).json({ success: true, sid: callSid });
   } catch (err) {
     console.error("Twilio call error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 }
