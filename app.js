@@ -17,11 +17,14 @@ const { StreamService } = require('./automate-sales-call/pages/services/stream-s
 const { TranscriptionService } = require('./automate-sales-call/pages/services/transcription-service');
 const { TextToSpeechService } = require('./automate-sales-call/pages/services/tts-service');
 const { recordingService } = require('./automate-sales-call/pages/services/recording-service');
-const { makeOutBoundCall } = require('./automate-sales-call/pages/scripts/outbound-call'); // ✅ correct import
+const { makeOutBoundCall } = require('./automate-sales-call/pages/scripts/outbound-call'); 
 
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
 
 const app = express();
+const cors = require("cors");
+app.use(cors({ origin: "*"}));
+
 ExpressWs(app);
 app.use(express.json());
 
@@ -37,7 +40,7 @@ app.post("/outbound-call", async (req, res) => {
 
   try {
     const call = await client.calls.create({
-      url: "https://automate-sales-call-deploy-6zkcceh5g-bitlanceais-projects.vercel.app/voice", // this URL must return TwiML
+      url: "https://automate-sales-call-deploy-production.up.railway.app/voice", // this URL must return TwiML
       to: req.body.phoneNumber,
       from: process.env.TWILIO_PHONE_NUMBER,
     });
