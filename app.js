@@ -67,6 +67,7 @@ app.post("/voice", (req, res) => {
 app.post('/incoming', (req, res) => {
   try {
     const response = new VoiceResponse();
+    response.say("Namaste..I am Bitlance AI! Thank you for registering with us!");
     const connect = response.connect();
     connect.stream({ url: `wss://${process.env.SERVER}/connection` });
     response.pause({ length: 600 }); // 10 minutes
