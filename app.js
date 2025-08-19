@@ -40,7 +40,7 @@ app.post("/outbound-call", async (req, res) => {
 
   try {
     const call = await client.calls.create({
-      url: "https://automate-sales-call-deploy-production.up.railway.app/voice", // this URL must return TwiML
+      url: "https://automate-sales-call-deploy-production.up.railway.app/incoming", // this URL must return TwiML
       to: req.body.phoneNumber,
       from: process.env.TWILIO_PHONE_NUMBER,
     });
