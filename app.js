@@ -1,3 +1,13 @@
+//const fs = require('fs');
+console.log("📝 Files in root directory:", fs.readdirSync('.'));
+
+// Optional: check if google_tts_cred.json exists
+if (fs.existsSync('./google_tts_cred.json')) {
+  console.log("✅ google_tts_cred.json exists!");
+} else {
+  console.log("❌ google_tts_cred.json NOT found!");
+}
+
 const fs = require('fs');
 fs.mkdirSync('tmp', { recursive: true });
 
@@ -201,3 +211,4 @@ app.ws('/connection', (ws) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
+
