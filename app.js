@@ -1,214 +1,119 @@
-const fs = require('fs');
-console.log("📝 Files in root directory:", fs.readdirSync('.'));
+import 'dotenv/config';   // <-- this must be line 1
+import express from "express";
+import expressWs from "express-ws";
+import bodyParser from "body-parser";
+import dotenv from "dotenv";
+import WebSocket from "ws";
+import { synthesizeSpeech } from "./services/tts-service.js";
+import translate from "google-translate-api-x";
 
-// Optional: check if google_tts_cred.json exists
-if (fs.existsSync('./google_tts_cred.json')) {
-  console.log("✅ google_tts_cred.json exists!");
-} else {
-  console.log("❌ google_tts_cred.json NOT found!");
-}
-
-fs.mkdirSync('tmp', { recursive: true });
-
-require('dotenv').config();
-require('colors');
-
-const express = require('express');
-const ExpressWs = require('express-ws');
-const twilio = require("twilio");
-const translate = require('google-translate-api-x');
-
-console.log('SERVER:', process.env.SERVER);
-
-// Core services
-const { GptService } = require('./automate-sales-call/pages/services/gpt-service');
-const { StreamService } = require('./automate-sales-call/pages/services/stream-service');
-const { TranscriptionService } = require('./automate-sales-call/pages/services/transcription-service');
-const { TextToSpeechService } = require('./automate-sales-call/pages/services/tts-service');
-const { recordingService } = require('./automate-sales-call/pages/services/recording-service');
-const { makeOutBoundCall } = require('./automate-sales-call/pages/scripts/outbound-call'); 
-
-const VoiceResponse = require('twilio').twiml.VoiceResponse;
+dotenv.config({ path: "./.env" });
 
 const app = express();
-const cors = require("cors");
-app.use(cors({ origin: "*"}));
+expressWs(app);
 
-ExpressWs(app);
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('Server is running!');
+let twilioWs = null;
+let deepgramWs = null;
+
+// TTS Queue
+const ttsQueue = [];
+let isTtsPlaying = false;
+
+// ========== Twilio Incoming ========== //
+app.post("/incoming", (req, res) => {
+  console.log("Incoming call from:", req.body.From);
+  const twiml = `<Response><Connect><Stream url="wss://${req.headers.host}/media" /></Connect></Response>`;
+  res.type("text/xml").send(twiml);
 });
 
-// ✅ Endpoint to start outbound call
-app.post("/outbound-call", async (req, res) => {
-  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// ========== Media WS ========== //
+app.ws("/media", (ws) => {
+  console.log("🔌 Twilio Media WS connected");
+  twilioWs = ws;
+  connectToDeepgram();
 
+  ws.on("message", (msg) => {
+    const data = JSON.parse(msg);
+    if (data.event === "media" && deepgramWs?.readyState === WebSocket.OPEN) {
+      deepgramWs.send(Buffer.from(data.media.payload, "base64"));
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("❌ Twilio WS closed");
+    deepgramWs?.close();
+  });
+});
+
+// ========== Deepgram Realtime STT ========== //
+function connectToDeepgram() {
+  console.log("🔗 Connecting to Deepgram STT...");
+  deepgramWs = new WebSocket(
+    "wss://api.deepgram.com/v1/listen?model=nova-2&encoding=mulaw&sample_rate=8000",
+    { headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` } }
+  );
+
+  deepgramWs.on("open", () => console.log("✅ Connected to Deepgram STT"));
+
+  deepgramWs.on("message", async (msg) => {
+    const data = JSON.parse(msg);
+    const transcript = data.channel?.alternatives?.[0]?.transcript;
+    if (!transcript || transcript.length === 0) return;
+
+    console.log("User said:", transcript);
+    const { text: englishText } = await translate(transcript, { to: "en" });
+    const botReply = generateBotReply(englishText);
+    const { text: hindiReply } = await translate(botReply, { to: "hi" });
+
+    ttsQueue.push(hindiReply);
+    playTtsQueue();
+  });
+}
+
+// ========== Bot Logic ========== //
+function generateBotReply(text) {
+  text = text.toLowerCase();
+  if (text.includes("price")) return "The starting price is 50 lakh rupees.";
+  if (text.includes("hello")) return "Hello! How are you doing today?";
+  return "I am your sales assistant. Could you tell me what you are looking for?";
+}
+
+// ========== TTS Queue Player ========== //
+async function playTtsQueue() {
+  if (isTtsPlaying || ttsQueue.length === 0) return;
+  isTtsPlaying = true;
+
+  const text = ttsQueue.shift();
   try {
-    const call = await client.calls.create({
-      url: "https://automate-sales-call-deploy-production.up.railway.app/incoming", // this URL must return TwiML
-      to: req.body.phoneNumber,
-      from: process.env.TWILIO_PHONE_NUMBER,
-    });
+    const audioBuffer = await synthesizeSpeech(text);
 
-    res.json({ success: true, sid: call.sid });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+    if (!twilioWs || twilioWs.readyState !== WebSocket.OPEN) return;
 
-// This is what Twilio fetches when the call connects
-app.post("/voice", (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say("Hello, this is your automated call. Press any key to continue.");
+    const chunkSize = 320;
+    let offset = 0;
+    while (offset < audioBuffer.length) {
+      const chunk = audioBuffer.slice(offset, offset + chunkSize);
+      offset += chunkSize;
 
-  res.type("text/xml");
-  res.send(twiml.toString());
-});
-
-//app.listen(3000, () => console.log("Server running on port 3000"));
-
-// Twilio /incoming webhook
-app.post('/incoming', (req, res) => {
-  try {
-    const response = new VoiceResponse();
-    response.say("Namaste..I am Bitlance AI! Thank you for registering with us!");
-    const connect = response.connect();
-    connect.stream({ url: `wss://${process.env.SERVER}/connection` });
-    response.pause({ length: 600 }); // 10 minutes
-    res.type('text/xml').send(response.toString());
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error');
-  }
-});
-
-// Twilio WebSocket stream
-app.ws('/connection', (ws) => {
-  try {
-    ws.on('error', console.error);
-    let streamSid, callSid;
-    const gptService = new GptService();
-    const streamService = new StreamService(ws);
-    const transcriptionService = new TranscriptionService();
-    const ttsService = new TextToSpeechService();
-
-    const ttsQueue = [];
-    let isTtsGenerating = false;
-    let interactionCount = 0;
-    let marks = [];
-
-    async function processTtsQueue() {
-      if (isTtsGenerating || ttsQueue.length === 0) return;
-      isTtsGenerating = true;
-
-      const { gptReply, icount } = ttsQueue.shift();
-      try {
-        console.log(`Interaction ${icount}: GPT -> TTS (Queued): ${gptReply.partialResponse}`.green);
-        await ttsService.generate(gptReply, icount);
-      } catch (err) {
-        console.error('TTS generation failed:', err);
-        isTtsGenerating = false;
-        processTtsQueue();
-      }
+      twilioWs.send(
+        JSON.stringify({ event: "media", media: { payload: chunk.toString("base64") } })
+      );
+      await new Promise((r) => setTimeout(r, 20));
     }
 
-    ws.on('message', (data) => {
-      const msg = JSON.parse(data);
-      if (msg.event === 'start') {
-        streamSid = msg.start.streamSid;
-        callSid = msg.start.callSid;
-
-        streamService.setStreamSid(streamSid);
-        gptService.setCallSid(callSid);
-
-        console.log(`Twilio -> Starting Media Stream for ${streamSid}`.underline.red);
-
-        setTimeout(() => {
-          ttsQueue.push({
-            gptReply: { partialResponseIndex: null, partialResponse: "लोधा बिल्डर्स में आपका स्वागत है, हम आपको हमारे एआई एजेंट से जोड़ रहे हैं।" },
-            icount: 0,
-          });
-
-          ttsQueue.push({
-            gptReply: { partialResponseIndex: null, partialResponse: "नमस्ते! क्या आप मुंबई या पुणे में नया घर खरीदने में रुचि रखते हैं?" },
-            icount: 1,
-          });
-
-          processTtsQueue();
-        }, 300);
-      }
-
-      if (msg.event === 'media') {
-        transcriptionService.send(msg.media.payload);
-      }
-
-      if (msg.event === 'mark') {
-        const label = msg.mark.name;
-        console.log(`Twilio -> Audio completed mark (${msg.sequenceNumber}): ${label}`.red);
-        marks = marks.filter((m) => m !== label);
-      }
-
-      if (msg.event === 'stop') {
-        console.log(`Twilio -> Media stream ${streamSid} ended.`.underline.red);
-      }
-    });
-
-    transcriptionService.on('utterance', async (text) => {
-      if (marks.length > 0 && text?.length > 5) {
-        console.log('Twilio -> Interruption, Clearing stream'.red);
-        ws.send(JSON.stringify({ streamSid, event: 'clear' }));
-      }
-    });
-
-    transcriptionService.on('transcription', async (text) => {
-      if (!text) return;
-      try {
-        const { text: englishText } = await translate(text, { to: 'en' });
-        console.log(`Interaction ${interactionCount} – STT(Hindi) -> EN -> GPT: ${englishText}`.yellow);
-        gptService.completion(englishText, interactionCount++);
-      } catch (err) {
-        console.error('Translation error:', err);
-      }
-    });
-
-    gptService.on('gptreply', async (gptReply, icount) => {
-      try {
-        const result = await translate(gptReply.partialResponse, { to: 'hi' });
-        const hindiReply = { ...gptReply, partialResponse: result.text };
-        console.log(`Interaction ${icount}: GPT -> Hindi -> TTS: ${hindiReply.partialResponse}`.green);
-        ttsQueue.push({ gptReply: hindiReply, icount });
-        processTtsQueue();
-      } catch (err) {
-        console.error('GPT->TTS translation failed:', err);
-      }
-    });
-
-    ttsService.on('speech', (responseIndex, audio, label, icount) => {
-      console.log(`Interaction ${icount}: TTS -> TWILIO: ${label}`.blue);
-      streamService.buffer(responseIndex, audio, label);
-
-      const waitForMark = (markLabel) => {
-        if (markLabel === label) {
-          streamService.off('audiosent', waitForMark);
-          isTtsGenerating = false;
-          processTtsQueue();
-        }
-      };
-
-      streamService.on('audiosent', waitForMark);
-    });
+    twilioWs.send(JSON.stringify({ event: "mark", mark: { name: "tts-end" } }));
   } catch (err) {
-    console.log(err);
+    console.error("TTS failed:", err);
+  } finally {
+    isTtsPlaying = false;
+    playTtsQueue();
   }
-});
+}
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
-
+// ========== Start Server ========== //
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
